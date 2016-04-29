@@ -80,15 +80,18 @@ try:
 except NameError:
     strtypes = (str, )
 
+from camel_case_splitter import split_camel_case
+
 class Names:
     '''Keeps a set of nested names and formats them to C identifier.'''
-    def __init__(self, parts = ()):
+    def __init__(self, parts=()):
         if isinstance(parts, Names):
             parts = parts.parts
         self.parts = tuple(parts)
 
     def __str__(self):
-        return '_'.join(self.parts)
+        name_str = '_'.join(self.parts)
+        return split_camel_case(name_str)
 
     def __add__(self, other):
         if isinstance(other, strtypes):
@@ -188,18 +191,18 @@ class Enum:
         return max([varint_max_size(v) for n,v in self.values])
 
     def __str__(self):
-        result = 'typedef enum _%s {\n' % self.names
+        result = 'typedef enum\n{\n'
         result += ',\n'.join(["    %s = %d" % x for x in self.values])
         result += '\n}'
 
         if self.packed:
             result += ' pb_packed'
 
-        result += ' %s;' % self.names
+        result += ' %s_t;' % self.names
 
-        result += '\n#define _%s_MIN %s' % (self.names, self.values[0][0])
-        result += '\n#define _%s_MAX %s' % (self.names, self.values[-1][0])
-        result += '\n#define _%s_ARRAYSIZE ((%s)(%s+1))' % (self.names, self.names, self.values[-1][0])
+        result += '\n#define %s_MIN %s' % (str(self.names).upper(), self.values[0][0])
+        result += '\n#define %s_MAX %s' % (str(self.names).upper(), self.values[-1][0])
+        result += '\n#define %s_ARRAYSIZE ((%s)(%s+1))' % (str(self.names).upper(), str(self.names) + "_t", self.values[-1][0])
 
         if not self.options.long_names:
             # Define the long names always so that enum value references
@@ -305,7 +308,7 @@ class Field:
                     self.ctype = 'u' + self.ctype;
         elif desc.type == FieldD.TYPE_ENUM:
             self.pbtype = 'ENUM'
-            self.ctype = names_from_type_name(desc.type_name)
+            self.ctype = names_from_type_name(desc.type_name) + "_t"
             if self.default is not None:
                 self.default = self.ctype + self.default
             self.enc_size = None # Needs to be filled in when enum values are known
@@ -325,7 +328,7 @@ class Field:
                 self.ctype = 'pb_bytes_array_t'
         elif desc.type == FieldD.TYPE_MESSAGE:
             self.pbtype = 'MESSAGE'
-            self.ctype = self.submsgname = names_from_type_name(desc.type_name)
+            self.ctype = self.submsgname = names_from_type_name(desc.type_name)+"_t"
             self.enc_size = None # Needs to be filled in after the message type is available
         else:
             raise NotImplementedError(desc.type)
@@ -360,7 +363,7 @@ class Field:
     def types(self):
         '''Return definitions for any special types this field might need.'''
         if self.pbtype == 'BYTES' and self.allocation == 'STATIC':
-            result = 'typedef PB_BYTES_ARRAY_T(%d) %s;\n' % (self.max_size, self.ctype)
+            result = 'typedef PB_BYTES_ARRAY_T(%d) %s;\n' % (self.max_size, str(self.ctype)[:])
         else:
             result = ''
         return result
@@ -381,7 +384,7 @@ class Field:
         inner_init = None
         if self.pbtype == 'MESSAGE':
             if null_init:
-                inner_init = '%s_init_zero' % self.ctype
+                inner_init = '%s_init_zero' % str(self.ctype).upper()
             else:
                 inner_init = '%s_init_default' % self.ctype
         elif self.default is None or null_init:
@@ -445,6 +448,10 @@ class Field:
 
         ctype = self.ctype
         default = self.get_initializer(False, True)
+        if '_T_' in default:
+            splitted = default.split('_T_')
+            default = splitted[0] + ' ' + splitted[1]
+        print default
         array_decl = ''
 
         if self.pbtype == 'STRING':
@@ -462,7 +469,7 @@ class Field:
 
     def tags(self):
         '''Return the #define for the tag number of this field.'''
-        identifier = '%s_%s_tag' % (self.struct_name, self.name)
+        identifier = ('%s_%s_tag' % (self.struct_name, self.name)).upper()
         return '#define %-40s %d\n' % (identifier, self.tag)
 
     def pb_field_t(self, prev_field_name):
@@ -483,12 +490,12 @@ class Field:
         result += '%s, ' % self.rules
         result += '%-8s, ' % self.allocation
         result += '%s, ' % ("FIRST" if not prev_field_name else "OTHER")
-        result += '%s, ' % self.struct_name
+        result += '%s, ' % (str(self.struct_name) + "_t")
         result += '%s, ' % self.name
         result += '%s, ' % (prev_field_name or self.name)
 
         if self.pbtype == 'MESSAGE':
-            result += '&%s_fields)' % self.submsgname
+            result += '&%s_fields)' % str(self.submsgname)[:-2]
         elif self.default is None:
             result += '0)'
         elif self.pbtype in ['BYTES', 'STRING'] and self.allocation != 'STATIC':
@@ -496,6 +503,7 @@ class Field:
         elif self.rules == 'OPTEXT':
             result += '0)' # Default value for extensions is not implemented
         else:
+            print self.struct_name
             result += '&%s_default)' % (self.struct_name + self.name)
 
         return result
@@ -509,14 +517,14 @@ class Field:
         check = []
         if self.pbtype == 'MESSAGE':
             if self.rules == 'REPEATED' and self.allocation == 'STATIC':
-                check.append('pb_membersize(%s, %s[0])' % (self.struct_name, self.name))
+                check.append('pb_membersize(%s, %s[0])' % (self.struct_name+"_t", self.name))
             elif self.rules == 'ONEOF':
                 if self.anonymous:
-                    check.append('pb_membersize(%s, %s)' % (self.struct_name, self.name))
+                    check.append('pb_membersize(%s, %s)' % (self.struct_name+"_t", self.name))
                 else:
-                    check.append('pb_membersize(%s, %s.%s)' % (self.struct_name, self.union_name, self.name))
+                    check.append('pb_membersize(%s, %s.%s)' % (self.struct_name+"_t", self.union_name, self.name))
             else:
-                check.append('pb_membersize(%s, %s)' % (self.struct_name, self.name))
+                check.append('pb_membersize(%s, %s)' % (self.struct_name+"_t", self.name))
 
         return FieldMaxSize([self.tag, self.max_size, self.max_count],
                             check,
@@ -808,13 +816,12 @@ class Message:
         return deps
 
     def __str__(self):
-        result = 'typedef struct _%s {\n' % self.name
+        result = 'typedef struct {\n'
 
         if not self.ordered_fields:
             # Empty structs are not allowed in C standard.
             # Therefore add a dummy field if an empty message occurs.
             result += '    char dummy_field;'
-
         result += '\n'.join([str(f) for f in self.ordered_fields])
         result += '\n/* @@protoc_insertion_point(struct:%s) */' % self.name
         result += '\n}'
@@ -822,7 +829,7 @@ class Message:
         if self.packed:
             result += ' pb_packed'
 
-        result += ' %s;' % self.name
+        result += ' %s_t;' % self.name
 
         if self.packed:
             result = 'PB_PACKED_STRUCT_START\n' + result
@@ -839,7 +846,17 @@ class Message:
 
         parts = []
         for field in self.ordered_fields:
-            parts.append(field.get_initializer(null_init))
+            to_append = ''
+            for i in field.get_initializer(null_init).split(', '):
+                if 'init_default' in i or 'init_zero' in i:
+                    to_append += i.upper()
+                else:
+                    to_append += i
+                to_append += ", "
+
+            to_append = to_append[:-2]
+
+            parts.append(to_append)
         return '{' + ', '.join(parts) + '}'
 
     def default_decl(self, declaration_only = False):
@@ -1096,10 +1113,10 @@ class ProtoFile:
 
             yield '/* Initializer values for message structs */\n'
             for msg in self.messages:
-                identifier = '%s_init_default' % msg.name
+                identifier = ('%s_init_default' % msg.name).upper()
                 yield '#define %-40s %s\n' % (identifier, msg.get_initializer(False))
             for msg in self.messages:
-                identifier = '%s_init_zero' % msg.name
+                identifier = ('%s_init_zero' % msg.name).upper()
                 yield '#define %-40s %s\n' % (identifier, msg.get_initializer(True))
             yield '\n'
 
@@ -1119,9 +1136,9 @@ class ProtoFile:
             yield '/* Maximum encoded size of messages (where known) */\n'
             for msg in self.messages:
                 msize = msg.encoded_size(self.dependencies)
-                identifier = '%s_size' % msg.name
+                identifier = ('%s_size' % msg.name).upper()
                 if msize is not None:
-                    yield '#define %-40s %s\n' % (identifier, msize)
+                    yield '#define %-40s %s\n' % (identifier, str(msize).upper())
                 else:
                     yield '/* %s depends on runtime parameters */\n' % identifier
             yield '\n'
