@@ -84,7 +84,7 @@ from camel_case_splitter import split_camel_case
 
 class Names:
     '''Keeps a set of nested names and formats them to C identifier.'''
-    def __init__(self, parts=()):
+    def __init__(self, parts = ()):
         if isinstance(parts, Names):
             parts = parts.parts
         self.parts = tuple(parts)
@@ -172,6 +172,8 @@ class Enum:
 
         self.options = enum_options
         self.names = names + desc.name
+        self.names_t = self.names + "_t"
+        self.names_upper = str(self.names).upper()
 
         if enum_options.long_names:
             self.values = [(self.names + x.name, x.number) for x in desc.value]
@@ -191,6 +193,7 @@ class Enum:
         return max([varint_max_size(v) for n,v in self.values])
 
     def __str__(self):
+        # result = 'typedef enum _%s {\n' % self.names_t
         result = 'typedef enum\n{\n'
         result += ',\n'.join(["    %s = %d" % x for x in self.values])
         result += '\n}'
@@ -198,11 +201,11 @@ class Enum:
         if self.packed:
             result += ' pb_packed'
 
-        result += ' %s_t;' % self.names
+        result += ' %s;' % self.names_t
 
-        result += '\n#define %s_MIN %s' % (str(self.names).upper(), self.values[0][0])
-        result += '\n#define %s_MAX %s' % (str(self.names).upper(), self.values[-1][0])
-        result += '\n#define %s_ARRAYSIZE ((%s)(%s+1))' % (str(self.names).upper(), str(self.names) + "_t", self.values[-1][0])
+        result += '\n#define %s_MIN %s' % (self.names_upper, self.values[0][0])
+        result += '\n#define %s_MAX %s' % (self.names_upper, self.values[-1][0])
+        result += '\n#define %s_ARRAYSIZE ((%s)(%s+1))' % (self.names_upper, str(self.names_t), self.values[-1][0])
 
         if not self.options.long_names:
             # Define the long names always so that enum value references
@@ -372,7 +375,7 @@ class Field:
     def types(self):
         '''Return definitions for any special types this field might need.'''
         if self.pbtype == 'BYTES' and self.allocation == 'STATIC':
-            result = 'typedef PB_BYTES_ARRAY_T(%d) %s;\n' % (self.max_size, str(self.ctype)[:])
+            result = 'typedef PB_BYTES_ARRAY_T(%d) %s;\n' % (self.max_size, self.ctype)
         else:
             result = ''
         return result
@@ -457,9 +460,6 @@ class Field:
 
         ctype = self.ctype
         default = self.get_initializer(False, True)
-        if '_T_' in default:
-            splitted = default.split('_T_')
-            default = splitted[0] + ' ' + splitted[1]
         array_decl = ''
 
         if self.pbtype == 'STRING':
@@ -639,7 +639,7 @@ class ExtensionField(Field):
 
     def tags(self):
         '''Return the #define for the tag number of this field.'''
-        identifier = '%s_tag' % self.fullname
+        identifier = ('%s_tag' % self.fullname).upper()
         return '#define %-40s %d\n' % (identifier, self.tag)
 
     def extension_decl(self):
@@ -660,7 +660,7 @@ class ExtensionField(Field):
 
         result  = 'typedef struct {\n'
         result += str(self)
-        result += '\n} %s;\n\n' % self.struct_name
+        result += '\n} %s_t;\n\n' % self.struct_name
         result += ('static const pb_field_t %s_field = \n  %s;\n\n' %
                     (self.fullname, self.pb_field_t(None)))
         result += 'const pb_extension_type_t %s = {\n' % self.fullname
@@ -770,6 +770,7 @@ class OneOf(Field):
 class Message:
     def __init__(self, names, desc, message_options):
         self.name = names
+        self.name_t = self.name + "_t"
         self.fields = []
         self.oneofs = {}
         no_unions = []
@@ -823,21 +824,21 @@ class Message:
         return deps
 
     def __str__(self):
+        # result = 'typedef struct _%s {\n' % self.name_t
         result = 'typedef struct {\n'
-        # result = 'typedef struct _%s_t {\n' % self.name # TODO
 
         if not self.ordered_fields:
             # Empty structs are not allowed in C standard.
             # Therefore add a dummy field if an empty message occurs.
             result += '    char dummy_field;'
         result += '\n'.join([str(f) for f in self.ordered_fields])
-        result += '\n/* @@protoc_insertion_point(struct:%s) */' % self.name
+        result += '\n/* @@protoc_insertion_point(struct:%s) */' % self.name_t
         result += '\n}'
 
         if self.packed:
             result += ' pb_packed'
 
-        result += ' %s_t;' % self.name
+        result += ' %s;' % self.name_t
 
         if self.packed:
             result = 'PB_PACKED_STRUCT_START\n' + result
