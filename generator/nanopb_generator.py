@@ -243,6 +243,7 @@ class Field:
         self.array_decl = ""
         self.enc_size = None
         self.ctype = None
+        self.ctype_t = None
 
         # Parse field options
         if field_options.HasField("max_size"):
@@ -300,21 +301,26 @@ class Field:
         # Decide the C data type to use in the struct.
         if desc.type in datatypes:
             self.ctype, self.pbtype, self.enc_size, isa = datatypes[desc.type]
+            self.ctype_t = self.ctype
 
             # Override the field size if user wants to use smaller integers
             if isa and field_options.int_size != nanopb_pb2.IS_DEFAULT:
                 self.ctype = intsizes[field_options.int_size]
+                self.ctype_t = self.ctype
                 if desc.type == FieldD.TYPE_UINT32 or desc.type == FieldD.TYPE_UINT64:
                     self.ctype = 'u' + self.ctype;
+                    self.ctype_t = self.ctype
         elif desc.type == FieldD.TYPE_ENUM:
             self.pbtype = 'ENUM'
-            self.ctype = names_from_type_name(desc.type_name) + "_t"
+            self.ctype = names_from_type_name(desc.type_name)
+            self.ctype_t = self.ctype + "_t"
             if self.default is not None:
                 self.default = self.ctype + self.default
             self.enc_size = None # Needs to be filled in when enum values are known
         elif desc.type == FieldD.TYPE_STRING:
             self.pbtype = 'STRING'
             self.ctype = 'char'
+            self.ctype_t = self.ctype
             if self.allocation == 'STATIC':
                 self.ctype = 'char'
                 self.array_decl += '[%d]' % self.max_size
@@ -323,12 +329,15 @@ class Field:
             self.pbtype = 'BYTES'
             if self.allocation == 'STATIC':
                 self.ctype = self.struct_name + self.name + 't'
+                self.ctype_t = self.ctype
                 self.enc_size = varint_max_size(self.max_size) + self.max_size
             elif self.allocation == 'POINTER':
                 self.ctype = 'pb_bytes_array_t'
+                self.ctype_t = self.ctype
         elif desc.type == FieldD.TYPE_MESSAGE:
             self.pbtype = 'MESSAGE'
-            self.ctype = self.submsgname = names_from_type_name(desc.type_name)+"_t"
+            self.ctype = self.submsgname = names_from_type_name(desc.type_name)
+            self.ctype_t = self.ctype + "_t"
             self.enc_size = None # Needs to be filled in after the message type is available
         else:
             raise NotImplementedError(desc.type)
@@ -344,12 +353,12 @@ class Field:
 
             if self.pbtype == 'MESSAGE':
                 # Use struct definition, so recursive submessages are possible
-                result += '    struct _%s *%s;' % (self.ctype, self.name)
+                result += '    struct _%s *%s;' % (self.ctype_t, self.name)
             elif self.rules == 'REPEATED' and self.pbtype in ['STRING', 'BYTES']:
                 # String/bytes arrays need to be defined as pointers to pointers
-                result += '    %s **%s;' % (self.ctype, self.name)
+                result += '    %s **%s;' % (self.ctype_t, self.name)
             else:
-                result += '    %s *%s;' % (self.ctype, self.name)
+                result += '    %s *%s;' % (self.ctype_t, self.name)
         elif self.allocation == 'CALLBACK':
             result += '    pb_callback_t %s;' % self.name
         else:
@@ -357,7 +366,7 @@ class Field:
                 result += '    bool has_' + self.name + ';\n'
             elif self.rules == 'REPEATED' and self.allocation == 'STATIC':
                 result += '    pb_size_t ' + self.name + '_count;\n'
-            result += '    %s %s%s;' % (self.ctype, self.name, self.array_decl)
+            result += '    %s %s%s;' % (self.ctype_t, self.name, self.array_decl)
         return result
 
     def types(self):
@@ -384,7 +393,7 @@ class Field:
         inner_init = None
         if self.pbtype == 'MESSAGE':
             if null_init:
-                inner_init = '%s_init_zero' % str(self.ctype).upper()
+                inner_init = '%s_init_zero' % self.ctype
             else:
                 inner_init = '%s_init_default' % self.ctype
         elif self.default is None or null_init:
@@ -393,7 +402,7 @@ class Field:
             elif self.pbtype == 'BYTES':
                 inner_init = '{0, {0}}'
             elif self.pbtype in ('ENUM', 'UENUM'):
-                inner_init = '(%s)0' % self.ctype
+                inner_init = '(%s)0' % self.ctype_t
             else:
                 inner_init = '0'
         else:
@@ -451,7 +460,6 @@ class Field:
         if '_T_' in default:
             splitted = default.split('_T_')
             default = splitted[0] + ' ' + splitted[1]
-        print default
         array_decl = ''
 
         if self.pbtype == 'STRING':
@@ -503,7 +511,6 @@ class Field:
         elif self.rules == 'OPTEXT':
             result += '0)' # Default value for extensions is not implemented
         else:
-            print self.struct_name
             result += '&%s_default)' % (self.struct_name + self.name)
 
         return result
@@ -817,6 +824,7 @@ class Message:
 
     def __str__(self):
         result = 'typedef struct {\n'
+        # result = 'typedef struct _%s_t {\n' % self.name # TODO
 
         if not self.ordered_fields:
             # Empty structs are not allowed in C standard.
