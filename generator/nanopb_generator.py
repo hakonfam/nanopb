@@ -503,7 +503,7 @@ class Field:
         result += '%s, ' % (prev_field_name or self.name)
 
         if self.pbtype == 'MESSAGE':
-            result += '&%s_fields)' % str(self.submsgname)[:-2]
+            result += '&%s_fields)' % str(self.submsgname)
         elif self.default is None:
             result += '0)'
         elif self.pbtype in ['BYTES', 'STRING'] and self.allocation != 'STATIC':
