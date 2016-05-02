@@ -80,7 +80,7 @@ try:
 except NameError:
     strtypes = (str, )
 
-from camel_case_splitter import split_camel_case
+from camel_case_splitter import camel_case_to_underscore
 
 class Names:
     '''Keeps a set of nested names and formats them to C identifier.'''
@@ -91,7 +91,7 @@ class Names:
 
     def __str__(self):
         name_str = '_'.join(self.parts)
-        return split_camel_case(name_str)
+        return camel_case_to_underscore(name_str)
 
     def __add__(self, other):
         if isinstance(other, strtypes):
